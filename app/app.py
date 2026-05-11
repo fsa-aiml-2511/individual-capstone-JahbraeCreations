@@ -1,326 +1,173 @@
 """
-Streamlit App for ML Model Deployment
-=====================================
-
-This is your Streamlit application that deploys both your regression and
-classification models. Users can input feature values and get predictions.
-
-HOW TO RUN LOCALLY:
-    streamlit run app/app.py
-
-HOW TO DEPLOY TO STREAMLIT CLOUD:
-    1. Push your code to GitHub
-    2. Go to share.streamlit.io
-    3. Connect your GitHub repo
-    4. Set the main file path to: app/app.py
-    5. Deploy!
-
-WHAT YOU NEED TO CUSTOMIZE:
-    1. Update the page title and description
-    2. Update feature input fields to match YOUR features
-    3. Update the model paths if you changed them
-    4. Customize the styling if desired
-
-Author: [Your Name]  # <-- UPDATE THIS!
-Dataset: [Your Dataset]  # <-- UPDATE THIS!
+Streamlit capstone app — used vehicle listing price (regression) + price tier (classification).
+Run from project root:  streamlit run app/app.py
 """
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
+from __future__ import annotations
+
+from functools import lru_cache
 from pathlib import Path
 
-# =============================================================================
-# PAGE CONFIGURATION
-# =============================================================================
-# This must be the first Streamlit command!
-st.set_page_config(
-    page_title="ML Prediction App",  # TODO: Update with your project name
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+import joblib
+import pandas as pd
+import streamlit as st
 
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-@st.cache_resource  # Cache the models so they don't reload every time
-def load_models():
-    """Load all saved models and artifacts."""
-    # Get the path to the models directory
-    # This works both locally and on Streamlit Cloud
-    base_path = Path(__file__).parent.parent / "models"
-
-    models = {}
-
-    try:
-        # Load regression model and scaler
-        models['regression_model'] = joblib.load(base_path / "regression_model.pkl")
-        models['regression_scaler'] = joblib.load(base_path / "regression_scaler.pkl")
-        models['regression_features'] = joblib.load(base_path / "regression_features.pkl")
-
-        # Load classification model and artifacts
-        models['classification_model'] = joblib.load(base_path / "classification_model.pkl")
-        models['classification_scaler'] = joblib.load(base_path / "classification_scaler.pkl")
-        models['label_encoder'] = joblib.load(base_path / "label_encoder.pkl")
-        models['classification_features'] = joblib.load(base_path / "classification_features.pkl")
-
-        # Optional: Load binning info for display
-        try:
-            models['binning_info'] = joblib.load(base_path / "binning_info.pkl")
-        except:
-            models['binning_info'] = None
-
-    except FileNotFoundError as e:
-        st.error(f"Model file not found: {e}")
-        st.info("Make sure you've trained and saved your models in the notebooks first!")
-        return None
-
-    return models
+ROOT = Path(__file__).resolve().parent.parent
 
 
-def make_regression_prediction(models, input_data):
-    """Make a regression prediction."""
-    # Scale the input
-    input_scaled = models['regression_scaler'].transform(input_data)
-    # Predict
-    prediction = models['regression_model'].predict(input_scaled)
-    return prediction[0]
+@lru_cache(maxsize=2)
+def _load_bundle(filename: str) -> dict:
+    path = ROOT / "models" / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Missing {path}. Run notebooks 02 and 03 (after 01) so the pickles are saved under models/."
+        )
+    return joblib.load(path)
 
 
-def make_classification_prediction(models, input_data):
-    """Make a classification prediction."""
-    # Scale the input
-    input_scaled = models['classification_scaler'].transform(input_data)
-    # Predict
-    prediction = models['classification_model'].predict(input_scaled)
-    # Get label
-    label = models['label_encoder'].inverse_transform(prediction)
-    return label[0], prediction[0]
+def load_regression_bundle() -> dict:
+    return _load_bundle("regression_model.pkl")
 
 
-# =============================================================================
-# SIDEBAR - Navigation
-# =============================================================================
-st.sidebar.title("Navigation")
-page = st.sidebar.radio(
-    "Choose a model:",
-    ["🏠 Home", "📈 Regression Model", "🏷️ Classification Model"]
-)
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### About")
-st.sidebar.info(
-    """
-    This app deploys machine learning models trained on [YOUR DATASET].
-
-    - **Regression**: Predicts [YOUR TARGET]
-    - **Classification**: Predicts [YOUR CATEGORIES]
-    """
-)
-# TODO: UPDATE YOUR NAME HERE! This shows visitors who built this app.
-st.sidebar.markdown("**Built by:** [YOUR NAME]")
-st.sidebar.markdown("[GitHub Repo](https://github.com/YOUR-USERNAME/YOUR-REPO)")
+def load_classification_bundle() -> dict:
+    return _load_bundle("classification_model.pkl")
 
 
-# =============================================================================
-# HOME PAGE
-# =============================================================================
-if page == "🏠 Home":
-    st.title("🤖 Machine Learning Prediction App")
-    st.markdown("### Welcome!")
+def inputs_to_frame(
+    year: int,
+    odometer: float,
+    manufacturer: str,
+    fuel: str,
+    transmission: str,
+    drive: str,
+    vehicle_type: str,
+) -> pd.DataFrame:
+    reg = load_regression_bundle()
+    age_base = int(reg["age_base"])
+    vehicle_age = age_base - int(year)
+    row = {
+        "vehicle_age": vehicle_age,
+        "odometer": float(odometer),
+        "manufacturer": manufacturer,
+        "fuel": fuel,
+        "transmission": transmission,
+        "drive": drive,
+        "type": vehicle_type,
+    }
+    cols = reg["feature_cols"]
+    return pd.DataFrame([row])[cols]
 
-    st.write(
-        """
-        This application allows you to make predictions using trained machine learning models.
 
-        **What you can do:**
-        - 📈 **Regression Model**: Predict a numerical value
-        - 🏷️ **Classification Model**: Predict a category
+def predict_price(
+    year: int,
+    odometer: float,
+    manufacturer: str,
+    fuel: str,
+    transmission: str,
+    drive: str,
+    vehicle_type: str,
+) -> float:
+    reg = load_regression_bundle()
+    x = inputs_to_frame(year, odometer, manufacturer, fuel, transmission, drive, vehicle_type)
+    return float(reg["pipeline"].predict(x)[0])
 
-        Use the sidebar to navigate between different models.
-        """
+
+def predict_tier(
+    year: int,
+    odometer: float,
+    manufacturer: str,
+    fuel: str,
+    transmission: str,
+    drive: str,
+    vehicle_type: str,
+) -> str:
+    cls = load_classification_bundle()
+    x = inputs_to_frame(year, odometer, manufacturer, fuel, transmission, drive, vehicle_type)
+    return str(cls["pipeline"].predict(x)[0])
+
+
+def tier_legend() -> str:
+    reg = load_regression_bundle()
+    q1, q2 = reg["tier_cutoffs"]
+    return (
+        f"**Budget** = predicted listing price roughly under **${q1:,.0f}** · "
+        f"**Mid** = about **${q1:,.0f} – ${q2:,.0f}** · "
+        f"**Premium** = roughly above **${q2:,.0f}** (based on tertiles from the cleaned training sample)."
     )
 
-    # TODO: Add more information about your specific project
-    st.markdown("---")
-    st.markdown("### About This Project")
-    st.write(
-        """
-        **Dataset:** [Describe your dataset]
 
-        **Problem Statement:** [What are you predicting and why?]
-
-        **Models Used:**
-        - Regression: [Your regression model type]
-        - Classification: [Your classification model type]
-        """
-    )
-
-    # Show a sample of your data or an image (optional)
-    # st.image("path/to/image.png", caption="Sample visualization")
+def dropdown_options():
+    reg = load_regression_bundle()
+    levels = reg["category_levels"]
+    return levels["manufacturer"], levels["fuel"], levels["transmission"], levels["drive"], levels["type"]
 
 
-# =============================================================================
-# REGRESSION PAGE
-# =============================================================================
-elif page == "📈 Regression Model":
-    st.title("📈 Regression Prediction")
-    st.write("Enter feature values to get a numerical prediction.")
+st.set_page_config(page_title="Used Vehicle Price Predictor", layout="centered")
 
-    # Load models
-    models = load_models()
-
-    if models is None:
-        st.stop()
-
-    # Get feature names
-    features = models['regression_features']
-
-    st.markdown("---")
-    st.markdown("### Enter Feature Values")
-
-    # Create input fields for each feature
-    # TODO: CUSTOMIZE THIS SECTION FOR YOUR FEATURES!
-    # The example below creates number inputs, but you may need:
-    # - st.selectbox() for categorical features
-    # - st.slider() for bounded numerical features
-    # - Different default values and ranges
-
-    # Create columns for better layout
-    col1, col2 = st.columns(2)
-
-    input_values = {}
-
-    for i, feature in enumerate(features):
-        # Alternate between columns
-        with col1 if i % 2 == 0 else col2:
-            # TODO: Customize each input based on your feature type and range
-            # Example: For a feature like 'bedrooms' you might use:
-            # input_values[feature] = st.number_input(feature, min_value=0, max_value=10, value=3)
-
-            input_values[feature] = st.number_input(
-                label=feature,
-                value=0.0,  # Default value - UPDATE THIS
-                help=f"Enter value for {feature}"
-            )
-
-    st.markdown("---")
-
-    # Prediction button
-    if st.button("🔮 Make Regression Prediction", type="primary"):
-        # Create input dataframe
-        input_df = pd.DataFrame([input_values])
-
-        # Make prediction
-        prediction = make_regression_prediction(models, input_df)
-
-        # Display result
-        st.success(f"### Predicted Value: {prediction:,.2f}")
-
-        # TODO: Add context to your prediction
-        # st.write(f"This means... [interpretation]")
-
-        # Show input summary
-        with st.expander("View Input Summary"):
-            st.dataframe(input_df)
-
-
-# =============================================================================
-# CLASSIFICATION PAGE
-# =============================================================================
-elif page == "🏷️ Classification Model":
-    st.title("🏷️ Classification Prediction")
-    st.write("Enter feature values to get a category prediction.")
-
-    # Load models
-    models = load_models()
-
-    if models is None:
-        st.stop()
-
-    # Get feature names and class labels
-    features = models['classification_features']
-    class_labels = models['label_encoder'].classes_
-
-    # Show the possible categories
-    st.info(f"**Possible Categories:** {', '.join(class_labels)}")
-
-    # Show binning info if available
-    if models['binning_info']:
-        with st.expander("How were categories created?"):
-            binning = models['binning_info']
-            st.write(f"Original target: **{binning['original_target']}**")
-            st.write("Categories were created by binning the numerical values:")
-            for i, label in enumerate(binning['labels']):
-                if i == 0:
-                    st.write(f"- **{label}**: < {binning['bins'][i+1]}")
-                elif i == len(binning['labels']) - 1:
-                    st.write(f"- **{label}**: >= {binning['bins'][i]}")
-                else:
-                    st.write(f"- **{label}**: {binning['bins'][i]} to {binning['bins'][i+1]}")
-
-    st.markdown("---")
-    st.markdown("### Enter Feature Values")
-
-    # Create input fields
-    # TODO: CUSTOMIZE THIS SECTION FOR YOUR FEATURES!
-
-    col1, col2 = st.columns(2)
-
-    input_values = {}
-
-    for i, feature in enumerate(features):
-        with col1 if i % 2 == 0 else col2:
-            # TODO: Customize each input based on your feature type and range
-            input_values[feature] = st.number_input(
-                label=feature,
-                value=0.0,
-                key=f"class_{feature}",  # Unique key for classification inputs
-                help=f"Enter value for {feature}"
-            )
-
-    st.markdown("---")
-
-    # Prediction button
-    if st.button("🔮 Make Classification Prediction", type="primary"):
-        # Create input dataframe
-        input_df = pd.DataFrame([input_values])
-
-        # Make prediction
-        predicted_label, predicted_index = make_classification_prediction(models, input_df)
-
-        # Display result with color coding
-        # TODO: Customize colors based on your categories
-        color_map = {
-            'Low': '🔴',
-            'Medium': '🟡',
-            'High': '🟢'
-        }
-        emoji = color_map.get(predicted_label, '🔵')
-
-        st.success(f"### Predicted Category: {emoji} {predicted_label}")
-
-        # TODO: Add interpretation
-        # st.write(f"This means... [interpretation]")
-
-        # Show input summary
-        with st.expander("View Input Summary"):
-            st.dataframe(input_df)
-
-
-# =============================================================================
-# FOOTER
-# =============================================================================
-st.markdown("---")
+st.title("Used vehicle price predictor")
 st.markdown(
-    """
-    <div style='text-align: center; color: gray;'>
-        Built by [YOUR NAME] | Full Stack Academy AI & ML Bootcamp
-    </div>
-    """,
-    unsafe_allow_html=True
+    "This is my capstone mini-app for Craigslist-style vehicle listings. "
+    "You punch in a few fields that actually mattered in my models, and you get a **dollar estimate** plus a **budget / mid / premium** bucket."
 )
-# TODO: Replace [YOUR NAME] above with your actual name!
+
+with st.sidebar:
+    st.subheader("What the tiers mean")
+    st.markdown(tier_legend())
+    st.caption("Bins are tertiles from my cleaned sample — same logic as notebook 03.")
+
+try:
+    mfg, fuels, trans, drives, types = dropdown_options()
+except FileNotFoundError as e:
+    st.error(str(e))
+    st.stop()
+
+year_min, year_max = 1990, 2022
+
+tab_reg, tab_cls = st.tabs(["Regression — price ($)", "Classification — price tier"])
+
+with tab_reg:
+    st.markdown("### Inputs (what my final regression actually uses)")
+    c1, c2 = st.columns(2)
+    with c1:
+        year = st.number_input("Model year", min_value=year_min, max_value=year_max, value=2015, step=1)
+        odometer = st.number_input("Odometer (miles)", min_value=0.0, max_value=400_000.0, value=85_000.0, step=500.0)
+        manufacturer = st.selectbox("Manufacturer", mfg)
+        fuel = st.selectbox("Fuel type", fuels)
+    with c2:
+        transmission = st.selectbox("Transmission", trans)
+        drive = st.selectbox("Drive", drives)
+        vehicle_type = st.selectbox("Vehicle type", types)
+
+    if st.button("Predict price", type="primary", key="reg_btn"):
+        try:
+            price = predict_price(year, odometer, manufacturer, fuel, transmission, drive, vehicle_type)
+            st.success(f"Estimated listing price: **${price:,.0f}**")
+            st.caption("Not financial advice — just what the model learned from messy real-world listings.")
+        except Exception as ex:  # noqa: BLE001
+            st.error(f"Something broke while predicting: {ex}")
+
+with tab_cls:
+    st.markdown("### Same inputs → tier instead of dollars")
+    c1, c2 = st.columns(2)
+    with c1:
+        year_c = st.number_input(
+            "Model year (classification tab)", min_value=year_min, max_value=year_max, value=2015, step=1, key="y2"
+        )
+        odometer_c = st.number_input(
+            "Odometer miles (classification tab)", min_value=0.0, max_value=400_000.0, value=85_000.0, step=500.0, key="o2"
+        )
+        manufacturer_c = st.selectbox("Manufacturer (classification)", mfg, key="m2")
+        fuel_c = st.selectbox("Fuel type (classification)", fuels, key="f2")
+    with c2:
+        transmission_c = st.selectbox("Transmission (classification)", trans, key="t2")
+        drive_c = st.selectbox("Drive (classification)", drives, key="d2")
+        vehicle_type_c = st.selectbox("Vehicle type (classification)", types, key="v2")
+
+    if st.button("Predict tier", type="primary", key="cls_btn"):
+        try:
+            tier = predict_tier(
+                year_c, odometer_c, manufacturer_c, fuel_c, transmission_c, drive_c, vehicle_type_c
+            )
+            st.success(f"Predicted tier: **{tier}**")
+        except Exception as ex:  # noqa: BLE001
+            st.error(f"Something broke while predicting: {ex}")
